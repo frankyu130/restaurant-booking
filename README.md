@@ -79,6 +79,15 @@ The application will be available at:
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
+## Team
+
+| Developer | Role |
+|---|---|
+| Frank Yu | Founder & Lead Developer |
+| Claude (Anthropic) | AI Developer — joined February 2026 |
+
+> As of February 2026, Claude (by Anthropic) joins the project as an AI developer, assisting with code generation, refactoring, debugging, and feature development.
+
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
