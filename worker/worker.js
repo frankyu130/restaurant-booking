@@ -1,5 +1,4 @@
-// Native Cloudflare Workers handler — no Express dependency needed
-// Same API as the local Express server: GET /api/restaurants, POST /api/bookings
+import { STATIC_ASSETS } from './static-assets.js';
 
 const restaurants = [
   {
@@ -49,11 +48,36 @@ const restaurants = [
   }
 ];
 
+const bookings = [];
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+
+function serveAsset(pathname) {
+  const asset = STATIC_ASSETS[pathname];
+  if (!asset) return null;
+
+  const isText = asset.contentType.startsWith('text/') ||
+    asset.contentType.includes('javascript') ||
+    asset.contentType.includes('json') ||
+    asset.contentType.includes('svg');
+
+  const body = isText
+    ? atob(asset.content)
+    : Uint8Array.from(atob(asset.content), c => c.charCodeAt(0));
+
+  const cacheControl = pathname.startsWith('/static/')
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=0, must-revalidate';
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': asset.contentType, 'Cache-Control': cacheControl }
+  });
+}
 
 export default {
   async fetch(request) {
@@ -69,17 +93,20 @@ export default {
 
     if (url.pathname === '/api/bookings' && request.method === 'POST') {
       const body = await request.json();
-      const booking = {
-        _id: crypto.randomUUID(),
-        ...body,
-        createdAt: new Date().toISOString()
-      };
+      const booking = { _id: crypto.randomUUID(), ...body, createdAt: new Date().toISOString() };
+      bookings.push(booking);
       return Response.json(booking, { status: 201, headers: corsHeaders });
     }
 
-    return new Response(JSON.stringify({ message: 'Not Found' }), {
-      status: 404,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+    // Serve exact static asset match
+    const asset = serveAsset(url.pathname);
+    if (asset) return asset;
+
+    // SPA fallback — React Router handles client-side routing
+    if (request.method === 'GET') {
+      return serveAsset('/index.html');
+    }
+
+    return new Response('Not Found', { status: 404 });
   }
 };

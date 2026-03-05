@@ -121,35 +121,82 @@ app.post('/api/bookings', async (req, res) => {
 app.post('/api/deploy', async (req, res) => {
   try {
     const esbuild = require('esbuild');
+    const { execSync } = require('child_process');
 
-    const workerEntryPoint = path.join(__dirname, 'worker', 'worker.js');
+    const clientDir = path.join(__dirname, 'client');
+    const buildDir = path.join(clientDir, 'build');
+    const workerDir = path.join(__dirname, 'worker');
+    const workerEntryPoint = path.join(workerDir, 'worker.js');
     const distDir = path.join(__dirname, 'dist');
     const outfile = path.join(distDir, 'worker.mjs');
-
-    if (!fs.existsSync(workerEntryPoint)) {
-      return res.status(500).json({
-        success: false,
-        error: 'Worker entry point not found at worker/worker.js'
-      });
-    }
 
     if (!fs.existsSync(distDir)) {
       fs.mkdirSync(distDir, { recursive: true });
     }
 
+    // Step 1: Build the React app
+    execSync('npm run build', {
+      cwd: clientDir,
+      stdio: 'pipe',
+      env: { ...process.env, GENERATE_SOURCEMAP: 'false' }
+    });
+
+    // Step 2: Walk build output and base64-encode all files
+    const CONTENT_TYPES = {
+      '.html': 'text/html; charset=utf-8',
+      '.js':   'application/javascript',
+      '.css':  'text/css',
+      '.json': 'application/json',
+      '.ico':  'image/x-icon',
+      '.png':  'image/png',
+      '.svg':  'image/svg+xml',
+      '.txt':  'text/plain',
+    };
+
+    function walkBuild(dir, baseDir, assets = {}) {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkBuild(full, baseDir, assets);
+        } else {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (ext === '.map') continue; // skip source maps
+          const urlPath = '/' + path.relative(baseDir, full).replace(/\\/g, '/');
+          assets[urlPath] = {
+            content: fs.readFileSync(full).toString('base64'),
+            contentType: CONTENT_TYPES[ext] || 'application/octet-stream'
+          };
+        }
+      }
+      return assets;
+    }
+
+    const assets = walkBuild(buildDir, buildDir);
+    const assetsModule = `export const STATIC_ASSETS = ${JSON.stringify(assets)};`;
+    fs.writeFileSync(path.join(workerDir, 'static-assets.js'), assetsModule);
+
+    // Step 3: Bundle with esbuild (worker.js imports static-assets.js)
     const result = await esbuild.build({
       entryPoints: [workerEntryPoint],
       bundle: true,
       format: 'esm',
       outfile: outfile,
       target: 'esnext',
-      minify: false,
+      minify: true,
       sourcemap: false,
       metafile: true,
     });
 
-    const stats = fs.statSync(outfile);
-    const bundleSizeKB = (stats.size / 1024).toFixed(2);
+    // Step 4: Size check
+    const bundleSizeMB = fs.statSync(outfile).size / (1024 * 1024);
+    if (bundleSizeMB > 10) {
+      return res.status(413).json({
+        success: false,
+        error: `Bundle too large: ${bundleSizeMB.toFixed(2)}MB exceeds 10MB Workers limit`
+      });
+    }
+
+    const bundleSizeKB = (fs.statSync(outfile).size / 1024).toFixed(2);
     const warnings = result.warnings.map(w => w.text);
 
     // Upload to Cloudflare Workers

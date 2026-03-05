@@ -61,23 +61,25 @@ const RestaurantList = () => {
         <Typography variant="h4" component="h1">
           Available Restaurants
         </Typography>
-        <Button
-          variant="contained"
-          onClick={handlePublish}
-          disabled={publishing}
-          startIcon={publishing ? <CircularProgress size={18} color="inherit" /> : null}
-          sx={{
-            textTransform: 'none',
-            borderRadius: '20px',
-            px: 3,
-            py: 1,
-            backgroundColor: '#6366f1',
-            '&:hover': { backgroundColor: '#4f46e5' },
-            '&:disabled': { backgroundColor: '#a5b4fc', color: 'white' },
-          }}
-        >
-          {publishing ? 'Publishing...' : 'Publish'}
-        </Button>
+        {process.env.REACT_APP_SHOW_PUBLISH === 'true' && (
+          <Button
+            variant="contained"
+            onClick={handlePublish}
+            disabled={publishing}
+            startIcon={publishing ? <CircularProgress size={18} color="inherit" /> : null}
+            sx={{
+              textTransform: 'none',
+              borderRadius: '20px',
+              px: 3,
+              py: 1,
+              backgroundColor: '#6366f1',
+              '&:hover': { backgroundColor: '#4f46e5' },
+              '&:disabled': { backgroundColor: '#a5b4fc', color: 'white' },
+            }}
+          >
+            {publishing ? 'Publishing...' : 'Publish'}
+          </Button>
+        )}
       </Box>
       <Grid container spacing={3}>
         {restaurants.map((restaurant) => (
