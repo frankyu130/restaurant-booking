@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -113,6 +115,122 @@ app.post('/api/bookings', async (req, res) => {
     res.status(201).json(savedBooking);
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+app.post('/api/deploy', async (req, res) => {
+  try {
+    const esbuild = require('esbuild');
+
+    const workerEntryPoint = path.join(__dirname, 'worker', 'worker.js');
+    const distDir = path.join(__dirname, 'dist');
+    const outfile = path.join(distDir, 'worker.mjs');
+
+    if (!fs.existsSync(workerEntryPoint)) {
+      return res.status(500).json({
+        success: false,
+        error: 'Worker entry point not found at worker/worker.js'
+      });
+    }
+
+    if (!fs.existsSync(distDir)) {
+      fs.mkdirSync(distDir, { recursive: true });
+    }
+
+    const result = await esbuild.build({
+      entryPoints: [workerEntryPoint],
+      bundle: true,
+      format: 'esm',
+      outfile: outfile,
+      target: 'esnext',
+      minify: false,
+      sourcemap: false,
+      metafile: true,
+    });
+
+    const stats = fs.statSync(outfile);
+    const bundleSizeKB = (stats.size / 1024).toFixed(2);
+    const warnings = result.warnings.map(w => w.text);
+
+    // Upload to Cloudflare Workers
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+
+    if (!accountId || !apiToken) {
+      return res.status(500).json({
+        success: false,
+        error: 'Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN in .env'
+      });
+    }
+
+    const scriptName = 'restaurant-booking-app';
+    const bundleContent = fs.readFileSync(outfile);
+
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({
+      main_module: 'worker.mjs',
+      compatibility_date: '2025-09-15',
+      compatibility_flags: ['nodejs_compat'],
+      bindings: []
+    })], { type: 'application/json' }));
+    form.append('worker.mjs', new Blob([bundleContent], {
+      type: 'application/javascript+module'
+    }), 'worker.mjs');
+
+    const cfResponse = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`,
+      {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${apiToken}` },
+        body: form
+      }
+    );
+
+    const cfResult = await cfResponse.json();
+
+    if (!cfResult.success) {
+      return res.status(502).json({
+        success: false,
+        error: `Cloudflare upload failed: ${cfResult.errors.map(e => e.message).join(', ')}`,
+        details: cfResult.errors
+      });
+    }
+
+    // Enable the workers.dev subdomain route for this script
+    await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`,
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true })
+      }
+    );
+
+    // Fetch the real account workers subdomain
+    const subdomainRes = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
+      { headers: { 'Authorization': `Bearer ${apiToken}` } }
+    );
+    const subdomainData = await subdomainRes.json();
+    const subdomain = subdomainData.result?.subdomain || accountId.slice(0, 8);
+
+    const workerUrl = `https://${scriptName}.${subdomain}.workers.dev`;
+
+    res.json({
+      success: true,
+      bundleSizeKB: parseFloat(bundleSizeKB),
+      warnings,
+      workerUrl,
+      scriptId: cfResult.result.id,
+      message: `Deployed! Live at ${workerUrl}`
+    });
+  } catch (error) {
+    console.error('Build error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: error.errors || []
+    });
   }
 });
 

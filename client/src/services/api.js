@@ -13,6 +13,12 @@ const api = {
   createBooking: async (bookingData) => {
     const response = await axios.post(`${API_URL}/bookings`, bookingData);
     return response.data;
+  },
+
+  // Trigger esbuild bundle for Cloudflare Workers deployment
+  deployWorker: async () => {
+    const response = await axios.post(`${API_URL}/deploy`);
+    return response.data;
   }
 };
 
